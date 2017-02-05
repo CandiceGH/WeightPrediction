@@ -1,0 +1,162 @@
+---
+title: "Weight Lifting Exercise Prediction Project"
+author: "Candice"
+date: "January 30, 2017"
+output: html_document
+---
+
+Setting a few global options
+```{r setoptions, echo = TRUE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE, fig.path = "fig/", warning = FALSE, message = FALSE, cache = TRUE)
+```
+Pre-installed packages used during this prediction analysis: 
+```{r load packages}
+library(ggplot2); library(caret); library(e1071); library(rattle)
+library(rpart); library(rpart.plot); library(randomForest)
+library(gbm); library(klaR); library(tree); library(randomForest)
+```
+
+### Weight Lifting Exercise Prediction Description And Methods
+
+'Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it' (Coursera, 2017). In this project, we use a Weight Lifting Exercises dataset from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to 'investigate "how (well)" an activity was performed by the wearer' (Ugulino et.al, 2012). For information, please see http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises#ixzz4XJAKS3kJ
+
+**Goal: Our goal is to predict the manner in which they did the exercise.** 
+
+__Model Build:__
+'Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E)' (Ugulino et.al, 2012).
+
+Therefore, to predict the correctly performed exercise, our outcome variable is 'classe', a factor variable with 5 levels. Prediction evaluations will be based on maximizing the accuracy and minimizing the out-of-sample error, using as many variables as viable for prediction. Two CART models will be tested: 1) decision tree and 2) random forest algorithms and the most accurate model will be chosen for use on the final test and test case data.
+
+__Cross Validation:__
+Cross validation is a model evaluation technique that allows for the assessment of a model in predicting on an independent data set, which reduces the potential for overfitting on the same data. 
+
+Approach: Here we apply data splitting cross validation by randomly spliting the original data into two sets without replacement: a training and a test set. The model is build on the training set and a prediction is performed only once on the test set with the using the final model. 
+
+__Expected Out Of Sample Error:__
+Out of sample errors are errors incurred when predictions are based on a new population of data and are expected to be greater than the in sample error. The accuracy of the prediction model is determined by the proportion of correctly classified outcome variables 'classe' in the original data set, while the expected out of sample error will be caculated as the number of incorrect classifications divided by the total observations in the test data set. 
+
+
+#### 1. Data
+
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test case data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+__1.1 Loading and preprocessing the data__
+
+Setting working directory and checking data file is present:
+```{r setpath and check for data}
+setwd("~/Coursera/Data Science Specialization/8_PracticalMachineLearning/CourseProjects")
+if (!file.exists("pml-training")) {print("Training data are available")} else {print("Data are not present")}
+if (!file.exists("pml-testing")) {print("Testing data are available")} else {print("Data are not present")}
+```
+
+Reading the  data into a dataframe and replacing missing values with NA:
+```{r loaddata}
+train_data <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!", ""))
+testcase_data <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!", ""))
+```
+
+Quick exploration of the data, calculating the total number of NA values and columns of only NA values:
+```{r exploredata}
+rnum <- nrow(train_data); vars <- names(train_data); varlength <- length(train_data) 
+presentNA <- anyNA(train_data); totalNA <- sum(is.na(train_data)) # sum overall NA values
+ans <- colSums(is.na(train_data)) == rnum; ColNA <- sum(ans, na.rm=TRUE) # sum columns with only NA values
+```
+
+* The __train_data set__ has __`r varlength`__ variables (columns) with __`r rnum`__ records (rows).
+* The __train_data set__ has __`r totalNA`__ NA values and __`r as.integer(ColNA)`__ columns with only NA.
+
+__1.2 Data cleaning - removing unnecessary data from both data sets that may contaminate the models__ 
+```{r data cleaning}
+# Delete columns with all missing values
+train_data_clean <- train_data[,colSums(is.na(train_data)) == 0]
+testcase_data_clean <- testcase_data[,colSums(is.na(testcase_data)) == 0]
+# Removing other identifiers and unncessary columns: i.e. user_name etc. (columns 1 to 7)
+train_data_clean <-train_data_clean[,-c(1:7)]
+test_subjects <-testcase_data_clean[,-c(1:7)] # different column numbers to remain names and order
+# Calculate the total number of NA values and columns left after cleaning
+rnum_C <- nrow(train_data_clean); varlength_C <- length(train_data_clean) 
+presentNA_C <- anyNA(train_data_clean); totalNA_C <- sum(is.na(train_data_clean)) # sum overall NA values
+```
+
+* The __cleaned train_data set__ has __`r varlength_C`__ variables (columns) with __`r rnum_C`__ records (rows). The __cleaned train_data set__ has __`r totalNA_C`__ NA values.
+
+
+#### 2. Model Building and Prediction
+
+Data splitting cross validation by randomly splitting the data into two sets without replacement - 60% for training and 40% for the test set:
+```{r data partition}
+inTrain <- createDataPartition(y=train_data_clean$classe, p=0.6, list=FALSE)
+training <- train_data_clean[inTrain, ]; testing <- train_data_clean[-inTrain, ]
+```
+
+* The __cleaned train_data set__ has been split into a __training dataset__ with __`r dim(training)`__ dimentions and a __testing dataset__ with __`r dim(testing)`__ dimensions.
+
+Exploratory plot of the data to determine classe frequency:
+```{r barplot}
+plot(training$classe, col = c("red", "green", "violet", "blue", "cyan") , main="Bar Plot of classe levels within the training data set", xlab="Classe levels", ylab="Frequency")
+```
+
+Classe A is the most frequent case, with classe D being the least frequent case. However, there is not a large difference in frequency between classe B-E. 
+
+##### __2.1 Decision Tree Model Build, Prediction and Fancy Plot__
+``` {r decision tree}
+# setting the seed for reproduction
+set.seed(1234)
+# Running the decision tree model on the training data
+modFit_dt <- rpart(classe ~., data = training, method="class")
+# Viewing the decision tree model using fancyRpartplot
+fancyRpartPlot(modFit_dt)
+# Using the model to predict on the testing data
+prediction_dt <- predict(modFit_dt, testing, type = "class")
+# Determining the accuracy and out of sample error of the decision tree model
+cm_dt <- confusionMatrix(prediction_dt, testing$classe)
+cm_dt
+```
+
+Decision Tree Model Accuracy and Expected out of sample error:
+```{r Decision Tree Accuracy and OUt of sample error}
+print(paste0("The accuracy of the Decision Tree model is: ", as.numeric(round(cm_dt$overall[1]*100,2)),"%"))
+print(paste0("The error rate of the Decision Tree model is: ", as.numeric(signif(1 - cm_dt$overall[1]),4)))
+```
+
+##### __2.2 Random Forest Model Build, Prediction and Plot__
+``` {r random forest}
+# setting the seed for reproduction
+set.seed(1234)
+# Running the decision tree model on the training data
+modFit_rf <- randomForest(classe ~., data = training, na.action = na.exclude) 
+# Viewing a plot of the random model 
+plot(modFit_rf, main = "Random Forest Model Error Rate for Individual Trees")
+# Using the model to predict on the testing data
+prediction_rf <- predict(modFit_rf, testing, type = "class")
+# Determining the accuracy and out of sample error of the decision tree model
+cm_rf <- confusionMatrix(prediction_rf, testing$classe)
+cm_rf
+```
+
+Random Forest Model Accuracy and Expected out of sample error:
+```{r Random Forest Accuracy and OUt of sample error}
+print(paste0("The accuracy of the Random Forest model is: ", as.numeric(round(cm_rf$overall[1]*100,2)),"%"))
+print(paste0("The error rate of the Random Forest model is: ", as.numeric(signif(1 - cm_rf$overall[1]),4)))
+```
+
+**Determination:** As shown, the Random Forest model performed far better than the Decision Tree Model. Therefore we will use the Random Forest model to predict on the test data set. 
+
+
+#### 3. Predicting the outcome on the final test subject data consisting of 20 cases
+``` {r final model fit on test subjects}
+predictfinal <- predict(modFit_rf, test_subjects, type="class")
+predictfinal
+```
+
+
+#### 4. References
+
+Coursera, 2017. Practical Machine Learning Course Project Background. https://www.coursera.org/learn/practical-machine-learning/supplement/PvInj/course-project-instructions-read-first
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6.Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4XJ9pQmeS
